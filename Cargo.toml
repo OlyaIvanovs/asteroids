@@ -7,4 +7,7 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-winit = "0.24.0"
+glutin = "0.26.0"
+gl = "0.14.0"
+nalgebra-glm = "0.7.0"  
+stb_image = "0.2.3" 
