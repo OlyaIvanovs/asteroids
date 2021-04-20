@@ -1,7 +1,7 @@
 extern crate nalgebra_glm as glm;
 
 use glutin::dpi::LogicalSize;
-use glutin::event::{Event, WindowEvent};
+use glutin::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent};
 use glutin::event_loop::{ControlFlow, EventLoop};
 use glutin::window::WindowBuilder;
 use glutin::ContextBuilder;
@@ -15,6 +15,14 @@ use std::fs;
 use std::time::Instant;
 
 use stb_image::image::{self, LoadResult};
+
+#[derive(Default)]
+struct Input {
+    forward: bool,
+    back: bool,
+    left: bool,
+    right: bool,
+}
 
 fn main() {
     let el = EventLoop::new();
@@ -50,33 +58,6 @@ fn main() {
         _ => panic!("Couldnt load image"),
     };
 
-    // Texture
-    let mut texture_id: GLuint = 0;
-    unsafe {
-        gl::GenTextures(1, &mut texture_id);
-        gl::ActiveTexture(gl::TEXTURE0);
-        gl::BindTexture(gl::TEXTURE_2D, texture_id);
-
-        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::REPEAT as GLint);
-        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::REPEAT as GLint);
-        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as GLint);
-        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as GLint);
-
-        gl::TexImage2D(
-            gl::TEXTURE_2D,
-            0,
-            gl::RGB as GLint,
-            img.width as GLint,
-            img.height as GLint,
-            0,
-            gl::RGB,
-            gl::UNSIGNED_BYTE,
-            img.data.as_ptr() as *const std::ffi::c_void,
-        );
-
-        gl::GenerateMipmap(gl::TEXTURE_2D);
-    }
-
     // Quad
     let right = 32.0 / img.width as f32;
     let bottom = 32.0 / img.height as f32;
@@ -85,14 +66,13 @@ fn main() {
 
     #[rustfmt::skip]
     let vertices: Vec<f32> = vec![
-        // Position        // Texcoords
-        -0.5, 0.5, 0.0,    0.0, 0.0,  
-        0.5, -0.5, 0.0,    right, bottom, 
-        -0.5, -0.5, 0.0,   0.0, bottom,
+        0.0, 0.5, 0.0,  
+        0.0, -0.25, 0.0, 
+        -0.5, -0.5, 0.0,
 
-        -0.5, 0.5, 0.0,    0.0, 0.0, 
-        0.5, 0.5, 0.0,     right, 0.0, 
-        0.5, -0.5, 0.0,    right, bottom,
+        0.0, 0.5, 0.0,  
+        0.0, -0.25, 0.0, 
+        0.5, -0.5, 0.0,
     ];
 
     let mut buffer_id: GLuint = 0;
@@ -112,10 +92,8 @@ fn main() {
         gl::GenVertexArrays(1, &mut vao_id);
         gl::BindVertexArray(vao_id);
 
-        gl::VertexAttribPointer(0, 3, gl::FLOAT, gl::FALSE, 5 * 4, 0 as *const GLvoid);
-        gl::VertexAttribPointer(1, 2, gl::FLOAT, gl::FALSE, 5 * 4, (3 * 4) as *const GLvoid);
+        gl::VertexAttribPointer(0, 3, gl::FLOAT, gl::FALSE, 3 * 4, 0 as *const GLvoid);
         gl::EnableVertexAttribArray(0);
-        gl::EnableVertexAttribArray(1);
     }
 
     // Vertex shader
@@ -186,23 +164,17 @@ fn main() {
         gl::LinkProgram(program_id);
 
         let mut success: GLint = 1;
-        unsafe {
-            gl::GetProgramiv(program_id, gl::LINK_STATUS, &mut success);
-        }
+        gl::GetProgramiv(program_id, gl::LINK_STATUS, &mut success);
         if success == 0 {
             let mut len: GLint = 0;
-            unsafe {
-                gl::GetProgramiv(program_id, gl::INFO_LOG_LENGTH, &mut len);
-            }
+            gl::GetProgramiv(program_id, gl::INFO_LOG_LENGTH, &mut len);
             let error = new_cstring(len as usize);
-            unsafe {
-                gl::GetProgramInfoLog(
-                    program_id,
-                    len,
-                    std::ptr::null_mut(),
-                    error.as_ptr() as *mut GLchar,
-                );
-            }
+            gl::GetProgramInfoLog(
+                program_id,
+                len,
+                std::ptr::null_mut(),
+                error.as_ptr() as *mut GLchar,
+            );
             println!("ERROR: {}", error.to_string_lossy().into_owned());
         }
 
@@ -216,7 +188,7 @@ fn main() {
 
     let start_time = Instant::now();
 
-    let model = glm::Mat4::identity();
+    let model = glm::scaling(&glm::vec3(0.1, 0.1, 0.1));
     let view = {
         let eye = glm::vec3(0.0, 0.0, 1.0);
         let center = glm::vec3(0.0, 0.0, 0.0);
@@ -244,18 +216,52 @@ fn main() {
         unsafe { gl::GetUniformLocation(program_id, name.as_ptr() as *const GLchar) }
     };
 
+    let mut input = Input::default();
+
+    let mut angle_dir = glm::pi::<f32>();
+    let mut frame_start = Instant::now();
+
     el.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
 
         match event {
-            Event::WindowEvent {
-                event: WindowEvent::CloseRequested,
-                ..
-            } => *control_flow = ControlFlow::Exit,
+            Event::WindowEvent { event, .. } => match event {
+                WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+                WindowEvent::KeyboardInput {
+                    input:
+                        KeyboardInput {
+                            state,
+                            virtual_keycode: Some(key),
+                            ..
+                        },
+                    ..
+                } => {
+                    // Key press
+                    match key {
+                        VirtualKeyCode::Up => input.forward = state == ElementState::Pressed,
+                        VirtualKeyCode::Left => input.left = state == ElementState::Pressed,
+                        VirtualKeyCode::Right => input.right = state == ElementState::Pressed,
+                        VirtualKeyCode::Down => input.back = state == ElementState::Pressed,
+                        VirtualKeyCode::Escape => *control_flow = ControlFlow::Exit,
+                        _ => {}
+                    }
+                }
+                _ => {}
+            },
             Event::MainEventsCleared => {
-                // let angle = start_time.elapsed().as_secs_f32();
-                // let model = glm::rotation(angle, &glm::vec3(0.0, 1.0, 0.0));
-                // let model = glm::rotate(&model, angle, &glm::vec3(0.0, 1.0, 0.0));
+                let delta_time = frame_start.elapsed().as_secs_f32();
+                frame_start = Instant::now();
+                if input.right {
+                    angle_dir += (glm::pi::<f32>()) * delta_time;
+                }
+                if input.left {
+                    angle_dir -= (glm::pi::<f32>()) * delta_time;
+                }
+
+                // let angle_y = start_time.elapsed().as_secs_f32() * 3.0;
+                // let model = glm::rotate(&model, angle_y, &glm::vec3(0.0, 1.0, 0.0));
+                let model = glm::rotate(&model, angle_dir, &glm::vec3(0.0, 0.0, -1.0));
+
                 unsafe {
                     gl::Clear(gl::COLOR_BUFFER_BIT);
                     gl::UniformMatrix4fv(model_uniform_location, 1, gl::FALSE, model.as_ptr());
